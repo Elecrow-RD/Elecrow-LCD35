@@ -1,0 +1,462 @@
+#!/bin/bash
+
+set -e
+Version="V1.0"
+
+function print_author() {
+
+    echo "************************************************************************************"
+    echo "*                                                                                  *"
+    echo "*  About the author:                                                               *"
+    echo "*  I'm a engineer of Elecrow, if you have any question. email:keen@elecrow.com     *"
+    echo "*                                                                                  *"
+    echo "*                                                           Created  29 Mar. 2017  *"
+    echo "*                                                           Modified 29 Mar. 2017  *"
+    echo "*                                                                         by Keen  *"
+    echo "*                                                                                  *"
+    echo "************************************************************************************"
+
+}
+
+function print_help() {
+    echo "***************************************************************************************"
+    echo "*                                                                                     *"
+    echo "**********************Wellcome to use Elecrow pitft Setup******************************"
+    echo "*                                                                                     *"
+    echo "*              Switch to 3.5 inch LCD.  Example: sudo ./Elecrow-LCD35                 *"
+    echo "*    [Angle]   Support rotation: 0/90/180/270. Example: sudo ./Elecrow-LCD35 270      *"
+    echo "*    hdmi      Switch to HDMI.          Example: sudo ./Elecrow-LCD35 hdmi            *"
+    echo "*    A         Print about the author.  Example: sudo ./Elecrow-LCD35 A               *"
+    echo "*    H         Print this help.         Example: sudo ./Elecrow-LCD35 H               *"
+    echo "*                                                                                     *"
+    echo "*    NOTE:     Only support Elecrow 3.5 Inch LCD.                                     *"
+    echo "*                                                                                     *"
+    echo "*                                                                            V1.0     *"
+    echo "***************************************************************************************"
+}
+
+group=Elecrow
+function info() {
+    system="$1"
+    group="${system}"
+    shift
+    FG="1;32m"
+    BG="40m"
+    echo -e "[\033[${FG}\033[${BG}${system}\033[0m] $*"
+}
+
+function bail() {
+    FG="1;31m"
+    BG="40m"
+    echo -en "[\033[${FG}\033[${BG}${group}\033[0m] "
+    if [ -z "$1" ]; then
+        echo "Exiting due to error"
+    else
+        echo "Exiting due to error: $*"
+    fi
+    exit 1
+}
+
+function ask() {
+    # http://djm.me/ask
+    while true; do
+
+        if [ "${2:-}" = "Y" ]; then
+            prompt="Y/n"
+            default=Y
+        elif [ "${2:-}" = "N" ]; then
+            prompt="y/N"
+            default=N
+        else
+            prompt="y/n"
+            default=
+        fi
+
+        # Ask the question
+        read -p "$1 [$prompt] " REPLY
+
+        # Default?
+        if [ -z "$REPLY" ]; then
+            REPLY=$default
+        fi
+
+        # Check if the reply is valid
+        case "$REPLY" in
+            Y*|y*) return 0 ;;
+            N*|n*) return 1 ;;
+        esac
+    done
+}
+
+function update_configtxt() {
+
+if grep -q "elecrow-pitft-setup" "/boot/config.txt"; then
+        echo "Config is already update..."
+else
+date=`date`
+cat >> /boot/config.txt <<EOF
+# --- added by elecrow-pitft-setup $date ---
+hdmi_force_hotplug=1
+dtoverlay=ads7846,cs=1,penirq=17,penirq_pull=2,speed=1000000,keep_vref_on=1,swapxy=1,pmax=255,xohms=60,xmin=200,xmax=3900,ymin=200,ymax=3900
+dtoverlay=elecrow35a,speed=22000000,fps=60
+# --- end elecrow-pitft-setup $date ---
+EOF
+fi
+}
+
+function pi_rotation(){
+
+sed -i '/dtoverlay=elecrow35a/'d /boot/config.txt
+sed -i '/end elecrow-pitft-setup/'d /boot/config.txt
+
+if [ "${rotation}" == "0" ]; then
+        overlay="dtoverlay=elecrow35a,rotate=0,speed=22000000,fps=60"
+fi
+
+if [ "${rotation}" == "90" ]; then
+        overlay="dtoverlay=elecrow35a,rotate=90,speed=22000000,fps=60"
+fi
+
+if [ "${rotation}" == "180" ]; then
+        overlay="dtoverlay=elecrow35a,rotate=180,speed=22000000,fps=60"
+fi
+
+if [ "${rotation}" == "270" ]; then
+        overlay="dtoverlay=elecrow35a,rotate=270,speed=22000000,fps=60"
+fi
+info PITFT "Rotation success!"
+
+date=`date`
+cat >> /boot/config.txt <<EOF
+$overlay
+# --- end elecrow-pitft-setup $date ---
+EOF
+info PITFT "Calibration screen..."
+calibration
+
+}
+
+function calibration() {
+
+rm -f /etc/X11/xorg.conf.d/99-calibration.conf
+
+if [ "${rotation}" == "0" ]; then
+        calib="250 3917 242 3863"
+	dn=0
+fi
+if [ "${rotation}" == "90" ]; then
+        calib="3917 250 242 3863"
+	dn=1
+fi
+if [ "${rotation}" == "180" ]; then
+        calib="3917 250 3863 242"
+	dn=0
+fi
+if [ "${rotation}" == "270" ]; then
+        calib="250 3917 3863 242"
+	dn=1
+fi
+info PITFT "Calibration success!"
+
+date=`date`
+cat > /etc/X11/xorg.conf.d/99-calibration.conf <<EOF
+# --- added by elecrow-pitft-setup $date ---
+Section "InputClass"
+	Identifier	"calibration"
+	MatchProduct	"ADS7846 Touchscreen"
+	Option	"Calibration"	"$calib"
+	Option	"SwapAxes"	"$dn"
+EndSection
+# --- end elecrow-pitft-setup $date ---
+EOF
+}
+
+function device_tree(){
+
+cp elecrow35a-overlay.dtb /boot/overlays/
+cp elecrow35a-overlay.dtb /boot/overlays/elecrow35a.dtbo
+
+}
+
+function update_xorg() {
+
+mkdir -p /etc/X11/xorg.conf.d
+sed -i 's/fb0/fb1/g' "/usr/share/X11/xorg.conf.d/99-fbturbo.conf"
+touch /etc/X11/xorg.conf.d/99-calibration.conf
+
+if grep -q "elecrow-pitft-setup" "/etc/X11/xorg.conf.d/99-calibration.conf"; then
+        echo "Xorg is already update."
+else
+
+date=`date`
+cat > /etc/X11/xorg.conf.d/99-calibration.conf <<EOF
+# --- added by elecrow-pitft-setup $date ---
+Section "InputClass"
+	Identifier	"calibration"
+	MatchProduct	"ADS7846 Touchscreen"
+	Option	"Calibration"	"3917 250 242 3863"
+	Option	"SwapAxes"	"1"
+EndSection
+# --- end elecrow-pitft-setup $date ---
+EOF
+fi
+}
+
+function install_console() {
+
+if ! grep -q 'fbcon=map:10 fbcon=font:ProFont6x11' /boot/cmdline.txt; then
+     sed -i 's/rootwait/rootwait fbcon=map:10 fbcon=font:ProFont6x11/g' "/boot/cmdline.txt"
+else
+     echo "Cmdline is already update..."
+fi
+
+}
+
+function update_inittab() {
+
+touch /etc/inittab
+
+if grep -q "elecrow-pitft-setup" "/etc/inittab"; then
+        echo "Inittab is already update..."
+else
+date=`date`
+cat >> /etc/inittab <<EOF
+# --- added by elecrow-pitft-setup $date ---
+# /etc/inittab: init(8) configuration.
+# $Id: inittab,v 1.91 2002/01/25 13:35:21 miquels Exp $
+
+# The default runlevel.
+id:2:initdefault:
+
+# Boot-time system configuration/initialization script.
+# This is run first except when booting in emergency (-b) mode.
+si::sysinit:/etc/init.d/rcS
+
+# What to do in single-user mode.
+~~:S:wait:/sbin/sulogin
+
+# /etc/init.d executes the S and K scripts upon change
+# of runlevel.
+#
+# Runlevel 0 is halt.
+# Runlevel 1 is single-user.
+# Runlevels 2-5 are multi-user.
+# Runlevel 6 is reboot.
+
+l0:0:wait:/etc/init.d/rc 0
+l1:1:wait:/etc/init.d/rc 1
+l2:2:wait:/etc/init.d/rc 2
+l3:3:wait:/etc/init.d/rc 3
+l4:4:wait:/etc/init.d/rc 4
+l5:5:wait:/etc/init.d/rc 5
+l6:6:wait:/etc/init.d/rc 6
+# Normally not reached, but fallthrough in case of emergency.
+z6:6:respawn:/sbin/sulogin
+
+# What to do when CTRL-ALT-DEL is pressed.
+ca:12345:ctrlaltdel:/sbin/shutdown -t1 -a -r now
+
+# Action on special keypress (ALT-UpArrow).
+#kb::kbrequest:/bin/echo "Keyboard Request--edit /etc/inittab to let this work."
+
+# What to do when the power fails/returns.
+pf::powerwait:/etc/init.d/powerfail start
+pn::powerfailnow:/etc/init.d/powerfail now
+po::powerokwait:/etc/init.d/powerfail stop
+
+# /sbin/getty invocations for the runlevels.
+#
+# The "id" field MUST be the same as the last
+# characters of the device (after "tty").
+#
+# Format:
+#  <id>:<runlevels>:<action>:<process>
+#
+# Note that on most Debian systems tty7 is used by the X Window System,
+# so if you want to add more getty's go ahead but skip tty7 if you run X.
+#
+1:2345:respawn:/sbin/getty --noclear 38400 tty1 
+2:23:respawn:/sbin/getty 38400 tty2
+3:23:respawn:/sbin/getty 38400 tty3
+4:23:respawn:/sbin/getty 38400 tty4
+5:23:respawn:/sbin/getty 38400 tty5
+6:23:respawn:/sbin/getty 38400 tty6
+
+# Example how to put a getty on a serial line (for a terminal)
+#
+#T0:23:respawn:/sbin/getty -L ttyS0 9600 vt100
+#T1:23:respawn:/sbin/getty -L ttyS1 9600 vt100
+
+# Example how to put a getty on a modem line.
+#
+#T3:23:respawn:/sbin/mgetty -x0 -s 57600 ttyS3
+
+
+#Spawn a getty on Raspberry Pi serial line
+T0:23:respawn:/sbin/getty -L ttyAMA0 115200 vt100
+# --- end elecrow-pitft-setup $date ---
+EOF
+fi
+}
+
+function switch_hdmi(){
+
+info HDMI "Switch to HDMI..."
+rm -f /etc/X11/xorg.conf.d/99-calibration.conf
+rm -f /usr/share/X11/xorg.conf.d/45-evdev.conf
+sed -i 's/rootwait fbcon=map:10 fbcon=font:ProFont6x11/rootwait/g' "/boot/cmdline.txt"
+sed -i '/added by elecrow-pitft-setup/,/end elecrow-pitft-setup/d' "/boot/config.txt"
+sed -i 's/fb1/fb0/g' "/usr/share/X11/xorg.conf.d/99-fbturbo.conf"
+info HDMI "Switch success!"
+
+}
+
+function update_evdev(){
+
+apt-get install xserver-xorg-input-evdev
+
+}
+
+function config_evdev(){
+
+cat > /usr/share/X11/xorg.conf.d/45-evdev.conf <<EOF
+# --- added by elecrow-pitft-setup $date ---
+Section "InputClass"
+        Identifier "evdev pointer catchall"
+        MatchIsPointer "on"
+        MatchDevicePath "/dev/input/event*"
+        Driver "evdev"
+EndSection
+
+Section "InputClass"
+        Identifier "evdev keyboard catchall"
+        MatchIsKeyboard "on"
+        MatchDevicePath "/dev/input/event*"
+        Driver "evdev"
+EndSection
+
+Section "InputClass"
+        Identifier "evdev touchpad catchall"
+        MatchIsTouchpad "on"
+        MatchDevicePath "/dev/input/event*"
+        Driver "evdev"
+EndSection
+
+Section "InputClass"
+        Identifier "evdev tablet catchall"
+        MatchIsTablet "on"
+        MatchDevicePath "/dev/input/event*"
+        Driver "evdev"
+EndSection
+
+Section "InputClass"
+        Identifier "evdev touchscreen catchall"
+        MatchIsTouchscreen "on"
+        MatchDevicePath "/dev/input/event*"
+        Driver "evdev"
+EndSection
+# --- end elecrow-pitft-setup $date ---
+EOF
+
+}
+
+function install_driver(){
+
+print_help
+
+info PITFT "Updating evdev..."
+update_evdev || bail "Unable to update evdev..."
+
+info PITFT "Config evdev..."
+config_evdev || bail "Unable to config evdev..."
+
+info PITFT "Updating config.txt..."
+update_configtxt || bail "Unable to update config..."
+
+info PITFT "Updating device tree..."
+device_tree || bail "Unable to install device_tree.."
+
+info PITFT "Updating X11 default calibration..."
+update_xorg || bail "Unable to update 99-calibration.conf..."
+
+info PITFT "Updating console to PiTFT..."
+install_console || bail "Unable to configure console..."
+
+#info PITFT "Updating inittab..."
+#update_inittab || bail "Unable to update inittab..."
+
+info PITFT "Install success!"
+info PITFT "Notes:"
+
+echo "************************************************************************************"
+echo "*                                                                                  *"
+echo "* Please don't run rpi-update, or you'll have to re-install a kernel               *"
+echo "* If you have any technical questions                                              *"
+echo "* Please feel free to contact our support staff via email at keen@elecrow.com      *"
+echo "*                                                                                  *"
+echo "************************************************************************************"
+
+}
+
+function verify_install_driver(){
+
+info PITFT "If you want to install the driver, it must be connect to the network..."
+info PITFT "Note: Only support elecrow 3.5 inch LCD..."
+info PITFT "Check system version..."
+wget -O /boot/LCD35.txt https://github.com/SmrazaKeen/verification/raw/master/LCD35.txt
+info PITFT "View the latest driver version"
+var1=$(grep -i "^Version" /boot/LCD35.txt | cut -d: -f 3 2>/dev/null)
+info PITFT "Current version_$Version"
+info PITFT "Latest $var1"
+info PITFT "If you want to update the version, you need to remove the old version and download the latest version"
+if grep -q "Raspbian-Kali-Ubuntu_Mate-Retropie-Octopi" "/boot/LCD35.txt"; then
+	rm -f /boot/LCD35.txt
+	info PITFT "Install the driver..."
+	install_driver || bail "Install failed.."
+else
+	echo "If there is no networking will prompt this error..."
+	bail "Please use Smraza legitimate driver to install..."
+fi
+
+}
+
+function reboot_sys(){
+
+read -p "Reboot to apply changes? (y/n): " -n 1 -r
+echo
+if [[ $REPLY =~ ^[Yy]$ ]]; then
+       reboot
+fi
+exit 1
+
+}
+
+info PITFT "Check system..."
+if [[ $EUID -ne 0 ]]; then
+    print_help
+    bail "elecrow-pitft-setup must be run as root. try:"
+fi
+
+if [ $# -eq 0 ]; then
+info PITFT "Install the driver..."
+install_driver || bail "Install failed.."
+#verify_install_driver
+print_author
+reboot_sys
+elif [ $1 == "0" ] || [ $1 == "90" ] || [ $1 == "180" ] || [ $1 == "270" ]; then
+rotation=$1
+pi_rotation
+reboot_sys
+elif [[ $1 == "hdmi" ]];then
+switch_hdmi
+reboot_sys
+elif [[ $1 == "A" ]];then
+print_author
+exit 1
+elif [[ $1 == "H" ]];then
+print_help
+exit 1
+else
+print_help
+exit 1
+fi
